@@ -10,7 +10,7 @@ use std::future::Future;
 
 use crate::client::{Client, ClusterInfo, Response};
 use crate::error::{ApiError, Error};
-use crate::first_ok::first_ok;
+use crate::first_ok::{first_ok, Result};
 
 /// The structure returned by the `GET /v2/auth/enable` endpoint.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -410,8 +410,6 @@ impl Permission {
         }
     }
 }
-
-type Result<T> = std::result::Result<Response<T>, Vec<Error>>;
 
 /// Creates a new role.
 pub fn create_role<C>(client: &Client<C>, role: Role) -> impl Future<Output = Result<Role>>
