@@ -174,11 +174,9 @@ where
     C: Clone + Connect + Send + Sync + 'static,
 {
     stream::iter(client.endpoints().clone())
-        .map(move |endpoint| {
-            async move {
-                let uri = build_uri(&endpoint, "v2/stats/self")?;
-                client.request(uri).await
-            }
+        .map(move |endpoint| async move {
+            let uri = build_uri(&endpoint, "v2/stats/self")?;
+            client.request(uri).await
         })
         .buffer_unordered(client.endpoints().len())
 }
@@ -194,11 +192,9 @@ where
     C: Clone + Connect + Send + Sync + 'static,
 {
     stream::iter(client.endpoints().clone())
-        .map(move |endpoint| {
-            async move {
-                let uri = build_uri(&endpoint, "v2/stats/store")?;
-                client.request(uri).await
-            }
+        .map(move |endpoint| async move {
+            let uri = build_uri(&endpoint, "v2/stats/store")?;
+            client.request(uri).await
         })
         .buffer_unordered(client.endpoints().len())
 }
