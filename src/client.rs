@@ -170,11 +170,9 @@ where
     /// Runs a basic health check against each etcd member.
     pub fn health<'a>(&'a self) -> impl Stream<Item = Result<Response<Health>, Error>> + 'a {
         stream::iter(self.endpoints.clone())
-            .map(move |endpoint| {
-                async move {
-                    let uri = build_url(&endpoint, "health")?;
-                    self.request(uri).await
-                }
+            .map(move |endpoint| async move {
+                let uri = build_url(&endpoint, "health")?;
+                self.request(uri).await
             })
             .buffer_unordered(self.endpoints.len())
     }
@@ -182,11 +180,9 @@ where
     /// Returns version information from each etcd cluster member the client was initialized with.
     pub fn versions<'a>(&'a self) -> impl Stream<Item = Result<Response<VersionInfo>, Error>> + 'a {
         stream::iter(self.endpoints.clone())
-            .map(move |endpoint| {
-                async move {
-                    let uri = build_url(&endpoint, "version")?;
-                    self.request(uri).await
-                }
+            .map(move |endpoint| async move {
+                let uri = build_url(&endpoint, "version")?;
+                self.request(uri).await
             })
             .buffer_unordered(self.endpoints.len())
     }
