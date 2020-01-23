@@ -136,62 +136,6 @@ where
     /// # Errors
     ///
     /// Fails if no endpoints are provided or if any of the endpoints is an invalid URL.
-    ///
-    /// # Examples
-    ///
-    /// Configuring the client to authenticate with both HTTP basic auth and an X.509 client
-    /// certificate:
-    ///
-    /// ```no_run
-    /// use std::fs::File;
-    /// use std::io::Read;
-    ///
-    /// use futures::Future;
-    /// use hyper::client::HttpConnector;
-    /// use hyper_tls::HttpsConnector;
-    /// use native_tls::{Certificate, TlsConnector, Identity};
-    /// use tokio::runtime::Runtime;
-    ///
-    /// use etcd::{Client, kv};
-    ///
-    /// fn main() {
-    ///     let mut ca_cert_file = File::open("ca.der").unwrap();
-    ///     let mut ca_cert_buffer = Vec::new();
-    ///     ca_cert_file.read_to_end(&mut ca_cert_buffer).unwrap();
-    ///
-    ///     let mut pkcs12_file = File::open("/source/tests/ssl/client.p12").unwrap();
-    ///     let mut pkcs12_buffer = Vec::new();
-    ///     pkcs12_file.read_to_end(&mut pkcs12_buffer).unwrap();
-    ///
-    ///     let mut builder = TlsConnector::builder();
-    ///     builder.add_root_certificate(Certificate::from_der(&ca_cert_buffer).unwrap());
-    ///     builder.identity(Identity::from_pkcs12(&pkcs12_buffer, "secret").unwrap());
-    ///
-    ///     let tls_connector = builder.build().unwrap();
-    ///
-    ///     let mut http_connector = HttpConnector::new(4);
-    ///     http_connector.enforce_http(false);
-    ///     let https_connector = HttpsConnector::from((http_connector, tls_connector));
-    ///
-    ///     let hyper = hyper::Client::builder().build(https_connector);
-    ///
-    ///     let client = Client::custom(hyper, &["https://etcd.example.com:2379"], None).unwrap();
-    ///
-    ///     let work = kv::set(&client, "/foo", "bar", None).and_then(move |_| {
-    ///         let get_request = kv::get(&client, "/foo", kv::GetOptions::default());
-    ///
-    ///         get_request.and_then(|response| {
-    ///             let value = response.data.node.value.unwrap();
-    ///
-    ///             assert_eq!(value, "bar".to_string());
-    ///
-    ///             Ok(())
-    ///         })
-    ///     });
-    ///
-    ///     assert!(Runtime::new().unwrap().block_on(work).is_ok());
-    /// }
-    /// ```
     pub fn custom(
         hyper: Hyper<C>,
         endpoints: &[&str],
