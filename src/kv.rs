@@ -753,13 +753,18 @@ where
     }
 
     let prev_exist = match options.prev_exist {
-        Some(prev_exist) => prev_exist,
-        None => false,
+        Some(prev_exist) => Some(prev_exist),
+        None => {
+            if options.refresh {
+                Some(true)
+            } else {
+                None
+            }
+        }
     };
 
     // If we are calling refresh, we should also ensure we are setting prevExist.
-    if prev_exist || options.refresh {
-        let prev_exist = prev_exist || options.refresh;
+    if let Some(prev_exist) = prev_exist {
         http_options.push(("prevExist".to_owned(), prev_exist.to_string()));
     }
 

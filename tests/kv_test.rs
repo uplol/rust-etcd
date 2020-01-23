@@ -12,7 +12,7 @@ mod test;
 
 #[tokio::test]
 async fn create() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     let res = kv::create(&client, "/test/foo", "bar", Some(60))
         .await
@@ -26,7 +26,7 @@ async fn create() {
 
 #[tokio::test]
 async fn create_does_not_replace_existing_key() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::create(&client, "/test/foo", "bar", Some(60))
         .await
@@ -46,7 +46,7 @@ async fn create_does_not_replace_existing_key() {
 
 #[tokio::test]
 async fn create_in_order() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     let requests = (1..4).map(|_| kv::create_in_order(&client, "/test/foo", "bar", None));
     let results: Vec<Response<KeyValueInfo>> = try_join_all(requests).await.unwrap();
@@ -62,7 +62,7 @@ async fn create_in_order() {
 
 #[tokio::test]
 async fn create_in_order_must_operate_on_a_directory() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     kv::create_in_order(&client, "/test/foo", "baz", None)
         .await
@@ -71,7 +71,7 @@ async fn create_in_order_must_operate_on_a_directory() {
 
 #[tokio::test]
 async fn compare_and_delete() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     let res = kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let index = res.data.node.modified_index;
     let res = kv::compare_and_delete(&client, "/test/foo", Some("bar"), index)
@@ -82,7 +82,7 @@ async fn compare_and_delete() {
 
 #[tokio::test]
 async fn compare_and_delete_only_index() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     let res = kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let index = res.data.node.modified_index;
@@ -94,7 +94,7 @@ async fn compare_and_delete_only_index() {
 
 #[tokio::test]
 async fn compare_and_delete_only_value() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let res = kv::compare_and_delete(&client, "/test/foo", Some("bar"), None)
@@ -105,10 +105,10 @@ async fn compare_and_delete_only_value() {
 
 #[tokio::test]
 async fn compare_and_delete_requires_conditions() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
-    let errors = kv::compare_and_delete(&client, "/test/foo", Some("bar"), None)
+    let errors = kv::compare_and_delete(&client, "/test/foo", None, None)
         .await
         .expect_err("expected Error::InvalidConditions");
 
@@ -124,7 +124,7 @@ async fn compare_and_delete_requires_conditions() {
 
 #[tokio::test]
 async fn test_compare_and_swap() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     let res = kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let index = res.data.node.modified_index;
 
@@ -136,7 +136,7 @@ async fn test_compare_and_swap() {
 
 #[tokio::test]
 async fn test_compare_and_swap_only_index() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     let res = kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let index = res.data.node.modified_index;
 
@@ -148,7 +148,7 @@ async fn test_compare_and_swap_only_index() {
 
 #[tokio::test]
 async fn test_compare_and_swap_only_value() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let res = kv::compare_and_swap(&client, "/test/foo", "baz", None, Some("bar"), None)
         .await
@@ -158,9 +158,9 @@ async fn test_compare_and_swap_only_value() {
 
 #[tokio::test]
 async fn compare_and_swap_requires_conditions() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
-    let errors = kv::compare_and_swap(&client, "/test/foo", "baz", None, Some("bar"), None)
+    let errors = kv::compare_and_swap(&client, "/test/foo", "baz", None, None, None)
         .await
         .expect_err("expected Error::InvalidConditions");
 
@@ -176,8 +176,10 @@ async fn compare_and_swap_requires_conditions() {
 
 #[tokio::test]
 async fn get() {
-    let client = TestClient::new();
-    kv::create(&client, "/test/foo", "bar", None).await.unwrap();
+    let client = TestClient::new().await;
+    kv::create(&client, "/test/foo", "bar", Some(60))
+        .await
+        .unwrap();
     let res = kv::get(&client, "/test/foo", GetOptions::default())
         .await
         .unwrap();
@@ -191,7 +193,7 @@ async fn get() {
 
 #[tokio::test]
 async fn get_non_recursive() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::set(&client, "/test/dir/baz", "blah", None)
         .await
         .unwrap();
@@ -220,7 +222,7 @@ async fn get_non_recursive() {
 
 #[tokio::test]
 async fn get_recursive() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::set(&client, "/test/dir/baz", "blah", None)
         .await
@@ -247,7 +249,7 @@ async fn get_recursive() {
 
 #[tokio::test]
 async fn get_root() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::create(&client, "/test/foo", "bar", Some(60))
         .await
@@ -282,7 +284,7 @@ async fn https_without_valid_client_certificate() {
 
 #[tokio::test]
 async fn set() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     let res = kv::set(&client, "/test/foo", "baz", None).await.unwrap();
     assert_eq!(res.data.action, Action::Set);
@@ -295,7 +297,7 @@ async fn set() {
 
 #[tokio::test]
 async fn set_and_refresh() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     let res = kv::set(&client, "/test/foo", "baz", Some(30))
         .await
@@ -318,7 +320,7 @@ async fn set_and_refresh() {
 
 #[tokio::test]
 async fn set_dir() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::set_dir(&client, "/test", None).await.unwrap();
     kv::set_dir(&client, "/test", None)
         .await
@@ -329,7 +331,7 @@ async fn set_dir() {
 
 #[tokio::test]
 async fn update() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
 
     let res = kv::update(&client, "/test/foo", "blah", Some(30))
@@ -345,7 +347,7 @@ async fn update() {
 
 #[tokio::test]
 async fn update_requires_existing_key() {
-    let client = TestClient::no_destructor();
+    let client = TestClient::new().await;
 
     let errors = kv::update(&client, "/test/foo", "bar", None)
         .await
@@ -359,7 +361,7 @@ async fn update_requires_existing_key() {
 
 #[tokio::test]
 async fn update_dir() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::create_dir(&client, "/test", None).await.unwrap();
     let res = kv::update_dir(&client, "/test", Some(60)).await.unwrap();
@@ -368,7 +370,7 @@ async fn update_dir() {
 
 #[tokio::test]
 async fn update_dir_replaces_key() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::set(&client, "/test/foo", "bar", None).await.unwrap();
     let res = kv::update_dir(&client, "/test/foo", Some(60))
@@ -382,13 +384,13 @@ async fn update_dir_replaces_key() {
 
 #[tokio::test]
 async fn update_dir_requires_existing_dir() {
-    let client = TestClient::no_destructor();
+    let client = TestClient::new().await;
     kv::update_dir(&client, "/test", None).await.unwrap_err();
 }
 
 #[tokio::test]
 async fn delete() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let res = kv::delete(&client, "/test/foo", false).await.unwrap();
     assert_eq!(res.data.action, Action::Delete);
@@ -396,7 +398,7 @@ async fn delete() {
 
 #[tokio::test]
 async fn create_dir() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     let res = kv::create_dir(&client, "/test/dir", None).await.unwrap();
     assert_eq!(res.data.action, Action::Create);
@@ -409,7 +411,7 @@ async fn create_dir() {
 
 #[tokio::test]
 async fn delete_dir() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
 
     kv::create_dir(&client, "/test/dir", None).await.unwrap();
     let res = kv::delete_dir(&client, "/test/dir").await.unwrap();
@@ -418,7 +420,7 @@ async fn delete_dir() {
 
 #[tokio::test]
 async fn watch() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
     let child = spawn(async {
         let client = TestClient::no_destructor();
@@ -434,7 +436,7 @@ async fn watch() {
 
 #[tokio::test]
 async fn watch_cancel() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     kv::create(&client, "/test/foo", "bar", None).await.unwrap();
 
     let err = kv::watch(
@@ -455,7 +457,7 @@ async fn watch_cancel() {
 
 #[tokio::test]
 async fn watch_index() {
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     let res = kv::set(&client, "/test/foo", "bar", None).await.unwrap();
 
     let index = res.data.node.modified_index;
@@ -486,7 +488,7 @@ async fn watch_recursive() {
             .unwrap()
     });
 
-    let client = TestClient::new();
+    let client = TestClient::new().await;
     let res = kv::watch(
         &client,
         "/test",

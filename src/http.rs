@@ -63,7 +63,6 @@ where
     fn request(&self, method: Method, uri: Uri) -> ResponseFuture {
         let request = Request::builder().method(method).uri(uri);
         let request = self.add_auth_header(request);
-
         self.hyper.request(request.body(Body::empty()).unwrap())
     }
 

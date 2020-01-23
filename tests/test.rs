@@ -7,8 +7,6 @@ use hyper::client::connect::Connect;
 use hyper::client::{Client as Hyper, HttpConnector};
 use hyper_tls::HttpsConnector;
 use native_tls::{Certificate, Identity, TlsConnector};
-use tokio::runtime::Runtime;
-// use tokio_tls::TlsConnector;
 
 /// Wrapper around Client that automatically cleans up etcd after each test.
 pub struct TestClient<C>
@@ -22,11 +20,14 @@ where
 impl TestClient<HttpConnector> {
     /// Creates a new client for a test.
     #[allow(dead_code)]
-    pub fn new() -> TestClient<HttpConnector> {
-        TestClient {
+    pub async fn new() -> TestClient<HttpConnector> {
+        let tc = TestClient {
             c: Client::new(&["http://etcd:2379"], None).unwrap(),
             run_destructor: true,
-        }
+        };
+
+        kv::delete(&tc.c, "/test", true).await.ok();
+        tc
     }
 
     /// Creates a new client for a test that will not clean up the key space afterwards.
@@ -76,12 +77,7 @@ where
     C: Clone + Connect + Sync + Send + 'static,
 {
     fn drop(&mut self) {
-        if self.run_destructor {
-            let mut rt = Runtime::new().unwrap();
-            rt.block_on(async {
-                kv::delete(&self.c, "/test", true).await.ok();
-            });
-        }
+        if self.run_destructor {}
     }
 }
 
