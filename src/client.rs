@@ -1,7 +1,8 @@
 //! Contains the etcd client. All API calls are made via the client.
 
-use futures::stream::futures_unordered;
-use futures::{Future, IntoFuture, Stream};
+use std::future::Future;
+
+use futures::stream::{self, Stream, StreamExt};
 use http::header::{HeaderMap, HeaderValue};
 use hyper::client::connect::{Connect, HttpConnector};
 use hyper::{Client as Hyper, StatusCode, Uri};
@@ -46,7 +47,7 @@ const XRAFT_TERM: &str = "X-Raft-Term";
 #[derive(Clone, Debug)]
 pub struct Client<C>
 where
-    C: Clone + Connect + Sync + 'static,
+    C: Clone + Connect + Sync + Send + 'static,
 {
     endpoints: Vec<Uri>,
     http_client: HttpClient<C>,
@@ -109,7 +110,7 @@ impl Client<HttpsConnector<HttpConnector>> {
         endpoints: &[&str],
         basic_auth: Option<BasicAuth>,
     ) -> Result<Client<HttpsConnector<HttpConnector>>, Error> {
-        let connector = HttpsConnector::new(4)?;
+        let connector = HttpsConnector::new();
         let hyper = Hyper::builder().keep_alive(true).build(connector);
 
         Client::custom(hyper, endpoints, basic_auth)
@@ -118,7 +119,7 @@ impl Client<HttpsConnector<HttpConnector>> {
 
 impl<C> Client<C>
 where
-    C: Clone + Connect + Sync + 'static,
+    C: Clone + Connect + Sync + Send + 'static,
 {
     /// Constructs a new client using the provided `hyper::Client`.
     ///
@@ -135,62 +136,6 @@ where
     /// # Errors
     ///
     /// Fails if no endpoints are provided or if any of the endpoints is an invalid URL.
-    ///
-    /// # Examples
-    ///
-    /// Configuring the client to authenticate with both HTTP basic auth and an X.509 client
-    /// certificate:
-    ///
-    /// ```no_run
-    /// use std::fs::File;
-    /// use std::io::Read;
-    ///
-    /// use futures::Future;
-    /// use hyper::client::HttpConnector;
-    /// use hyper_tls::HttpsConnector;
-    /// use native_tls::{Certificate, TlsConnector, Identity};
-    /// use tokio::runtime::Runtime;
-    ///
-    /// use etcd::{Client, kv};
-    ///
-    /// fn main() {
-    ///     let mut ca_cert_file = File::open("ca.der").unwrap();
-    ///     let mut ca_cert_buffer = Vec::new();
-    ///     ca_cert_file.read_to_end(&mut ca_cert_buffer).unwrap();
-    ///
-    ///     let mut pkcs12_file = File::open("/source/tests/ssl/client.p12").unwrap();
-    ///     let mut pkcs12_buffer = Vec::new();
-    ///     pkcs12_file.read_to_end(&mut pkcs12_buffer).unwrap();
-    ///
-    ///     let mut builder = TlsConnector::builder();
-    ///     builder.add_root_certificate(Certificate::from_der(&ca_cert_buffer).unwrap());
-    ///     builder.identity(Identity::from_pkcs12(&pkcs12_buffer, "secret").unwrap());
-    ///
-    ///     let tls_connector = builder.build().unwrap();
-    ///
-    ///     let mut http_connector = HttpConnector::new(4);
-    ///     http_connector.enforce_http(false);
-    ///     let https_connector = HttpsConnector::from((http_connector, tls_connector));
-    ///
-    ///     let hyper = hyper::Client::builder().build(https_connector);
-    ///
-    ///     let client = Client::custom(hyper, &["https://etcd.example.com:2379"], None).unwrap();
-    ///
-    ///     let work = kv::set(&client, "/foo", "bar", None).and_then(move |_| {
-    ///         let get_request = kv::get(&client, "/foo", kv::GetOptions::default());
-    ///
-    ///         get_request.and_then(|response| {
-    ///             let value = response.data.node.value.unwrap();
-    ///
-    ///             assert_eq!(value, "bar".to_string());
-    ///
-    ///             Ok(())
-    ///         })
-    ///     });
-    ///
-    ///     assert!(Runtime::new().unwrap().block_on(work).is_ok());
-    /// }
-    /// ```
     pub fn custom(
         hyper: Hyper<C>,
         endpoints: &[&str],
@@ -223,97 +168,49 @@ where
     }
 
     /// Runs a basic health check against each etcd member.
-    pub fn health(&self) -> impl Stream<Item = Response<Health>, Error = Error> + Send {
-        let futures = self.endpoints.iter().map(|endpoint| {
-            let url = build_url(&endpoint, "health");
-            let uri = url.parse().map_err(Error::from).into_future();
-            let cloned_client = self.http_client.clone();
-            let response = uri.and_then(move |uri| cloned_client.get(uri).map_err(Error::from));
-            response.and_then(|response| {
-                let status = response.status();
-                let cluster_info = ClusterInfo::from(response.headers());
-                let body = response.into_body().concat2().map_err(Error::from);
-
-                body.and_then(move |ref body| {
-                    if status == StatusCode::OK {
-                        match serde_json::from_slice::<Health>(body) {
-                            Ok(data) => Ok(Response { data, cluster_info }),
-                            Err(error) => Err(Error::Serialization(error)),
-                        }
-                    } else {
-                        match serde_json::from_slice::<ApiError>(body) {
-                            Ok(error) => Err(Error::Api(error)),
-                            Err(error) => Err(Error::Serialization(error)),
-                        }
-                    }
-                })
+    pub fn health<'a>(&'a self) -> impl Stream<Item = Result<Response<Health>, Error>> + 'a {
+        stream::iter(self.endpoints.clone())
+            .map(move |endpoint| async move {
+                let uri = build_url(&endpoint, "health")?;
+                self.request(uri).await
             })
-        });
-
-        futures_unordered(futures)
+            .buffer_unordered(self.endpoints.len())
     }
 
     /// Returns version information from each etcd cluster member the client was initialized with.
-    pub fn versions(&self) -> impl Stream<Item = Response<VersionInfo>, Error = Error> + Send {
-        let futures = self.endpoints.iter().map(|endpoint| {
-            let url = build_url(&endpoint, "version");
-            let uri = url.parse().map_err(Error::from).into_future();
-            let cloned_client = self.http_client.clone();
-            let response = uri.and_then(move |uri| cloned_client.get(uri).map_err(Error::from));
-            response.and_then(|response| {
-                let status = response.status();
-                let cluster_info = ClusterInfo::from(response.headers());
-                let body = response.into_body().concat2().map_err(Error::from);
-
-                body.and_then(move |ref body| {
-                    if status == StatusCode::OK {
-                        match serde_json::from_slice::<VersionInfo>(body) {
-                            Ok(data) => Ok(Response { data, cluster_info }),
-                            Err(error) => Err(Error::Serialization(error)),
-                        }
-                    } else {
-                        match serde_json::from_slice::<ApiError>(body) {
-                            Ok(error) => Err(Error::Api(error)),
-                            Err(error) => Err(Error::Serialization(error)),
-                        }
-                    }
-                })
+    pub fn versions<'a>(&'a self) -> impl Stream<Item = Result<Response<VersionInfo>, Error>> + 'a {
+        stream::iter(self.endpoints.clone())
+            .map(move |endpoint| async move {
+                let uri = build_url(&endpoint, "version")?;
+                self.request(uri).await
             })
-        });
-
-        futures_unordered(futures)
+            .buffer_unordered(self.endpoints.len())
     }
 
     /// Lets other internal code make basic HTTP requests.
-    pub(crate) fn request<U, T>(
-        &self,
-        uri: U,
-    ) -> impl Future<Item = Response<T>, Error = Error> + Send
+    pub(crate) fn request<T>(&self, uri: Uri) -> impl Future<Output = Result<Response<T>, Error>>
     where
-        U: Future<Item = Uri, Error = Error> + Send,
         T: DeserializeOwned + Send + 'static,
     {
         let http_client = self.http_client.clone();
-        let response = uri.and_then(move |uri| http_client.get(uri).map_err(Error::from));
-        response.and_then(|response| {
+
+        async move {
+            let response = http_client.get(uri).await?;
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
-
-            body.and_then(move |body| {
-                if status == StatusCode::OK {
-                    match serde_json::from_slice::<T>(&body) {
-                        Ok(data) => Ok(Response { data, cluster_info }),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
-                } else {
-                    match serde_json::from_slice::<ApiError>(&body) {
-                        Ok(error) => Err(Error::Api(error)),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
+            let body = hyper::body::to_bytes(response).await?;
+            if status == StatusCode::OK {
+                match serde_json::from_slice::<T>(&body) {
+                    Ok(data) => Ok(Response { data, cluster_info }),
+                    Err(error) => Err(Error::Serialization(error)),
                 }
-            })
-        })
+            } else {
+                match serde_json::from_slice::<ApiError>(&body) {
+                    Ok(error) => Err(Error::Api(error)),
+                    Err(error) => Err(Error::Serialization(error)),
+                }
+            }
+        }
     }
 }
 
@@ -403,6 +300,6 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for ClusterInfo {
 }
 
 /// Constructs the full URL for the versions API call.
-fn build_url(endpoint: &Uri, path: &str) -> String {
-    format!("{}{}", endpoint, path)
+fn build_url(endpoint: &Uri, path: &str) -> Result<Uri, http::uri::InvalidUri> {
+    format!("{}{}", endpoint, path).parse()
 }

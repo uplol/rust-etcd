@@ -1,33 +1,32 @@
 use etcd::stats;
-use futures::{Future, Stream};
 
 use crate::test::TestClient;
+use futures::stream::StreamExt;
 
 mod test;
 
-#[test]
-fn leader_stats() {
-    let mut client = TestClient::no_destructor();
-
-    let work = stats::leader_stats(&client);
-
-    client.run(work);
+#[tokio::test]
+async fn leader_stats() {
+    let client = TestClient::no_destructor();
+    stats::leader_stats(&client).await.unwrap();
 }
 
-#[test]
-fn self_stats() {
-    let mut client = TestClient::no_destructor();
+#[tokio::test]
+async fn self_stats() {
+    let client = TestClient::no_destructor();
+    let mut stats = stats::self_stats(&client);
 
-    let work = stats::self_stats(&client).collect().and_then(|_| Ok(()));
-
-    client.run(work);
+    while let Some(s) = stats.next().await {
+        s.unwrap();
+    }
 }
 
-#[test]
-fn store_stats() {
-    let mut client = TestClient::no_destructor();
+#[tokio::test]
+async fn store_stats() {
+    let client = TestClient::no_destructor();
+    let mut stats = stats::store_stats(&client);
 
-    let work = stats::store_stats(&client).collect().and_then(|_| Ok(()));
-
-    client.run(work);
+    while let Some(s) = stats.next().await {
+        s.unwrap();
+    }
 }

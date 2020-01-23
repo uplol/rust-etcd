@@ -2,17 +2,15 @@
 //!
 //! These API endpoints are used to manage cluster membership.
 
-use std::str::FromStr;
-
-use futures::{Future, IntoFuture, Stream};
 use hyper::client::connect::Connect;
 use hyper::{StatusCode, Uri};
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
+use std::future::Future;
 
 use crate::client::{Client, ClusterInfo, Response};
 use crate::error::{ApiError, Error};
-use crate::first_ok::first_ok;
+use crate::first_ok::{first_ok, Result};
 
 /// An etcd server that is a member of a cluster.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -50,55 +48,44 @@ struct ListResponse {
 ///
 /// * client: A `Client` to use to make the API call.
 /// * peer_urls: URLs exposing this cluster member's peer API.
-pub fn add<C>(
-    client: &Client<C>,
-    peer_urls: Vec<String>,
-) -> Box<dyn Future<Item = Response<()>, Error = Vec<Error>>>
+pub async fn add<C>(client: &Client<C>, peer_urls: Vec<String>) -> Result<()>
 where
-    C: Clone + Connect,
+    C: Clone + Send + Sync + Connect + 'static,
 {
     let peer_urls = PeerUrls { peer_urls };
 
     let body = match serde_json::to_string(&peer_urls) {
         Ok(body) => body,
-        Err(error) => return Box::new(Err(vec![Error::Serialization(error)]).into_future()),
+        Err(error) => return Err(vec![Error::Serialization(error)]),
     };
 
     let http_client = client.http_client().clone();
 
-    let result = first_ok(client.endpoints().to_vec(), move |member| {
-        let url = build_url(member, "");
-        let uri = Uri::from_str(url.as_str())
-            .map_err(Error::from)
-            .into_future();
-
-        let body = body.clone();
+    first_ok(client.endpoints().to_vec(), move |member| {
         let http_client = http_client.clone();
+        let body = body.clone();
 
-        let response = uri.and_then(move |uri| http_client.post(uri, body).map_err(Error::from));
-
-        response.and_then(|response| {
+        async move {
+            let uri = build_uri(&member, "")?;
+            let response = http_client.post(uri, body).await?;
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
+            let body = hyper::body::to_bytes(response).await?;
 
-            body.and_then(move |ref body| {
-                if status == StatusCode::CREATED {
-                    Ok(Response {
-                        data: (),
-                        cluster_info,
-                    })
-                } else {
-                    match serde_json::from_slice::<ApiError>(body) {
-                        Ok(error) => Err(Error::Api(error)),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
+            if status == StatusCode::CREATED {
+                Ok(Response {
+                    data: (),
+                    cluster_info,
+                })
+            } else {
+                match serde_json::from_slice::<ApiError>(&body) {
+                    Ok(error) => Err(Error::Api(error)),
+                    Err(error) => Err(Error::Serialization(error)),
                 }
-            })
-        })
-    });
-
-    Box::new(result)
+            }
+        }
+    })
+    .await
 }
 
 /// Deletes a member from the cluster.
@@ -107,44 +94,36 @@ where
 ///
 /// * client: A `Client` to use to make the API call.
 /// * id: The unique identifier of the member to delete.
-pub fn delete<C>(
-    client: &Client<C>,
-    id: String,
-) -> impl Future<Item = Response<()>, Error = Vec<Error>> + Send
+pub fn delete<C>(client: &Client<C>, id: String) -> impl Future<Output = Result<()>>
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     let http_client = client.http_client().clone();
 
     first_ok(client.endpoints().to_vec(), move |member| {
-        let url = build_url(member, &format!("/{}", id));
-        let uri = Uri::from_str(url.as_str())
-            .map_err(Error::from)
-            .into_future();
-
         let http_client = http_client.clone();
+        let id = id.clone();
 
-        let response = uri.and_then(move |uri| http_client.delete(uri).map_err(Error::from));
+        async move {
+            let uri = build_uri(&member, &format!("/{}", id))?;
+            let response = http_client.delete(uri).await?;
 
-        response.and_then(|response| {
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
+            let body = hyper::body::to_bytes(response).await?;
 
-            body.and_then(move |ref body| {
-                if status == StatusCode::NO_CONTENT {
-                    Ok(Response {
-                        data: (),
-                        cluster_info,
-                    })
-                } else {
-                    match serde_json::from_slice::<ApiError>(body) {
-                        Ok(error) => Err(Error::Api(error)),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
+            if status == StatusCode::NO_CONTENT {
+                Ok(Response {
+                    data: (),
+                    cluster_info,
+                })
+            } else {
+                match serde_json::from_slice::<ApiError>(&body) {
+                    Ok(error) => Err(Error::Api(error)),
+                    Err(error) => Err(Error::Serialization(error)),
                 }
-            })
-        })
+            }
+        }
     })
 }
 
@@ -153,46 +132,38 @@ where
 /// # Parameters
 ///
 /// * client: A `Client` to use to make the API call.
-pub fn list<C>(
-    client: &Client<C>,
-) -> impl Future<Item = Response<Vec<Member>>, Error = Vec<Error>> + Send
+pub fn list<C>(client: &Client<C>) -> impl Future<Output = Result<Vec<Member>>>
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     let http_client = client.http_client().clone();
 
     first_ok(client.endpoints().to_vec(), move |member| {
-        let url = build_url(member, "");
-        let uri = Uri::from_str(url.as_str())
-            .map_err(Error::from)
-            .into_future();
-
         let http_client = http_client.clone();
 
-        let response = uri.and_then(move |uri| http_client.get(uri).map_err(Error::from));
+        async move {
+            let uri = build_uri(&member, "")?;
+            let response = http_client.get(uri).await?;
 
-        response.and_then(|response| {
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
+            let body = hyper::body::to_bytes(response).await?;
 
-            body.and_then(move |ref body| {
-                if status == StatusCode::OK {
-                    match serde_json::from_slice::<ListResponse>(body) {
-                        Ok(data) => Ok(Response {
-                            data: data.members,
-                            cluster_info,
-                        }),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
-                } else {
-                    match serde_json::from_slice::<ApiError>(body) {
-                        Ok(error) => Err(Error::Api(error)),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
+            if status == StatusCode::OK {
+                match serde_json::from_slice::<ListResponse>(&body) {
+                    Ok(data) => Ok(Response {
+                        data: data.members,
+                        cluster_info,
+                    }),
+                    Err(error) => Err(Error::Serialization(error)),
                 }
-            })
-        })
+            } else {
+                match serde_json::from_slice::<ApiError>(&body) {
+                    Ok(error) => Err(Error::Api(error)),
+                    Err(error) => Err(Error::Serialization(error)),
+                }
+            }
+        }
     })
 }
 
@@ -203,59 +174,49 @@ where
 /// * client: A `Client` to use to make the API call.
 /// * id: The unique identifier of the member to update.
 /// * peer_urls: URLs exposing this cluster member's peer API.
-pub fn update<C>(
-    client: &Client<C>,
-    id: String,
-    peer_urls: Vec<String>,
-) -> Box<dyn Future<Item = Response<()>, Error = Vec<Error>>>
+pub async fn update<C>(client: &Client<C>, id: String, peer_urls: Vec<String>) -> Result<()>
 where
-    C: Clone + Connect,
+    C: Clone + Send + Sync + Connect + 'static,
 {
     let peer_urls = PeerUrls { peer_urls };
 
     let body = match serde_json::to_string(&peer_urls) {
         Ok(body) => body,
-        Err(error) => return Box::new(Err(vec![Error::Serialization(error)]).into_future()),
+        Err(error) => return Err(vec![Error::Serialization(error)]),
     };
 
     let http_client = client.http_client().clone();
 
-    let result = first_ok(client.endpoints().to_vec(), move |member| {
-        let url = build_url(member, &format!("/{}", id));
-        let uri = Uri::from_str(url.as_str())
-            .map_err(Error::from)
-            .into_future();
-
+    first_ok(client.endpoints().to_vec(), move |member| {
         let body = body.clone();
         let http_client = http_client.clone();
+        let id = id.clone();
 
-        let response = uri.and_then(move |uri| http_client.put(uri, body).map_err(Error::from));
+        async move {
+            let uri = build_uri(&member, &format!("/{}", id))?;
+            let response = http_client.put(uri, body).await?;
 
-        response.and_then(|response| {
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
+            let body = hyper::body::to_bytes(response).await?;
 
-            body.and_then(move |ref body| {
-                if status == StatusCode::NO_CONTENT {
-                    Ok(Response {
-                        data: (),
-                        cluster_info,
-                    })
-                } else {
-                    match serde_json::from_slice::<ApiError>(body) {
-                        Ok(error) => Err(Error::Api(error)),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
+            if status == StatusCode::NO_CONTENT {
+                Ok(Response {
+                    data: (),
+                    cluster_info,
+                })
+            } else {
+                match serde_json::from_slice::<ApiError>(&body) {
+                    Ok(error) => Err(Error::Api(error)),
+                    Err(error) => Err(Error::Serialization(error)),
                 }
-            })
-        })
-    });
-
-    Box::new(result)
+            }
+        }
+    })
+    .await
 }
 
 /// Constructs the full URL for an API call.
-fn build_url(endpoint: &Uri, path: &str) -> String {
-    format!("{}v2/members{}", endpoint, path)
+fn build_uri(endpoint: &Uri, path: &str) -> std::result::Result<Uri, http::uri::InvalidUri> {
+    format!("{}v2/members{}", endpoint, path).parse()
 }

@@ -10,7 +10,7 @@ use crate::client::BasicAuth;
 #[derive(Clone, Debug)]
 pub struct HttpClient<C>
 where
-    C: Clone + Connect + Sync + 'static,
+    C: Clone + Connect + Sync + Send + 'static,
 {
     basic_auth: Option<BasicAuth>,
     hyper: Hyper<C>,
@@ -18,7 +18,7 @@ where
 
 impl<C> HttpClient<C>
 where
-    C: Clone + Connect + Sync + 'static,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     /// Constructs a new `HttpClient`.
     pub fn new(hyper: Hyper<C>, basic_auth: Option<BasicAuth>) -> Self {
@@ -48,32 +48,32 @@ where
     // private
 
     /// Adds the Authorization HTTP header to a request if a credentials were supplied.
-    fn add_auth_header<'a>(&self, request: &mut Builder) {
+    fn add_auth_header(&self, request: Builder) -> Builder {
         if let Some(ref basic_auth) = self.basic_auth {
             let auth = format!("{}:{}", basic_auth.username, basic_auth.password);
             let header_value = format!("Basic {}", encode(&auth));
 
-            request.header(AUTHORIZATION, header_value);
+            request.header(AUTHORIZATION, header_value)
+        } else {
+            request
         }
     }
 
     /// Makes a request to etcd.
     fn request(&self, method: Method, uri: Uri) -> ResponseFuture {
-        let mut request = Request::builder();
-        request.method(method).uri(uri);
-
-        self.add_auth_header(&mut request);
-
+        let request = Request::builder().method(method).uri(uri);
+        let request = self.add_auth_header(request);
         self.hyper.request(request.body(Body::empty()).unwrap())
     }
 
     /// Makes a request with an HTTP body to etcd.
     fn request_with_body(&self, method: Method, uri: Uri, body: String) -> ResponseFuture {
-        let mut request = Request::builder();
-        request.method(method).uri(uri);
-        request.header(CONTENT_TYPE, "application/x-www-form-urlencoded");
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded");
 
-        self.add_auth_header(&mut request);
+        let request = self.add_auth_header(request);
 
         self.hyper.request(request.body(Body::from(body)).unwrap())
     }

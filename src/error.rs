@@ -10,7 +10,6 @@ use hyper::{Error as HttpError, StatusCode};
 use native_tls::Error as TlsError;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Error as SerializationError;
-use tokio::timer::timeout::Error as TokioTimeoutError;
 use url::ParseError as UrlError;
 
 /// An error returned by an etcd API endpoint.
@@ -72,10 +71,10 @@ impl Display for Error {
         match *self {
             Error::Api(ref error) => write!(f, "{}", error),
             Error::Http(ref error) => write!(f, "{}", error),
-            ref error @ Error::InvalidConditions => write!(f, "{}", error.description()),
+            ref error @ Error::InvalidConditions => write!(f, "{}", error.to_string()),
             Error::InvalidUri(ref error) => write!(f, "{}", error),
             Error::InvalidUrl(ref error) => write!(f, "{}", error),
-            ref error @ Error::NoEndpoints => write!(f, "{}", error.description()),
+            ref error @ Error::NoEndpoints => write!(f, "{}", error.to_string()),
             #[cfg(feature = "tls")]
             Error::Tls(ref error) => write!(f, "{}", error),
             Error::Serialization(ref error) => write!(f, "{}", error),
@@ -145,16 +144,10 @@ pub enum WatchError {
     Timeout,
 }
 
-impl<T> From<TokioTimeoutError<T>> for WatchError {
-    fn from(_: TokioTimeoutError<T>) -> Self {
-        WatchError::Timeout
-    }
-}
-
 impl Display for WatchError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         match *self {
-            WatchError::Timeout => write!(f, "{}", self.description()),
+            WatchError::Timeout => write!(f, "{}", self.to_string()),
             ref other => other.fmt(f),
         }
     }

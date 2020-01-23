@@ -2,8 +2,7 @@
 
 use std::collections::HashMap;
 
-use futures::stream::futures_unordered;
-use futures::{Future, IntoFuture, Stream};
+use futures::stream::{self, Stream, StreamExt};
 use hyper::client::connect::Connect;
 use hyper::Uri;
 use serde_derive::{Deserialize, Serialize};
@@ -157,58 +156,50 @@ pub struct StoreStats {
 /// Returns statistics about the leader member of a cluster.
 ///
 /// Fails if JSON decoding fails, which suggests a bug in our schema.
-pub fn leader_stats<C>(
-    client: &Client<C>,
-) -> impl Future<Item = Response<LeaderStats>, Error = Error> + Send
+pub async fn leader_stats<C>(client: &Client<C>) -> Result<Response<LeaderStats>, Error>
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
-    let url = build_url(&client.endpoints()[0], "v2/stats/leader");
-    let uri = url.parse().map_err(Error::from).into_future();
-
-    client.request(uri)
+    let uri = build_uri(&client.endpoints()[0], "v2/stats/leader")?;
+    client.request(uri).await
 }
 
 /// Returns statistics about each cluster member the client was initialized with.
 ///
 /// Fails if JSON decoding fails, which suggests a bug in our schema.
-pub fn self_stats<C>(
-    client: &Client<C>,
-) -> impl Stream<Item = Response<SelfStats>, Error = Error> + Send
+pub fn self_stats<'a, C>(
+    client: &'a Client<C>,
+) -> impl Stream<Item = Result<Response<SelfStats>, Error>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
-    let futures = client.endpoints().iter().map(|endpoint| {
-        let url = build_url(&endpoint, "v2/stats/self");
-        let uri = url.parse().map_err(Error::from).into_future();
-
-        client.request(uri)
-    });
-
-    futures_unordered(futures)
+    stream::iter(client.endpoints().clone())
+        .map(move |endpoint| async move {
+            let uri = build_uri(&endpoint, "v2/stats/self")?;
+            client.request(uri).await
+        })
+        .buffer_unordered(client.endpoints().len())
 }
 
 /// Returns statistics about operations handled by each etcd member the client was initialized
 /// with.
 ///
 /// Fails if JSON decoding fails, which suggests a bug in our schema.
-pub fn store_stats<C>(
-    client: &Client<C>,
-) -> impl Stream<Item = Response<StoreStats>, Error = Error> + Send
+pub fn store_stats<'a, C>(
+    client: &'a Client<C>,
+) -> impl Stream<Item = Result<Response<StoreStats>, Error>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
-    let futures = client.endpoints().iter().map(|endpoint| {
-        let url = build_url(&endpoint, "v2/stats/store");
-        let uri = url.parse().map_err(Error::from).into_future();
-
-        client.request(uri)
-    });
-
-    futures_unordered(futures)
+    stream::iter(client.endpoints().clone())
+        .map(move |endpoint| async move {
+            let uri = build_uri(&endpoint, "v2/stats/store")?;
+            client.request(uri).await
+        })
+        .buffer_unordered(client.endpoints().len())
 }
 
 /// Constructs the full URL for an API call.
-fn build_url(endpoint: &Uri, path: &str) -> String {
-    format!("{}{}", endpoint, path)
+fn build_uri(endpoint: &Uri, path: &str) -> std::result::Result<Uri, http::uri::InvalidUri> {
+    format!("{}{}", endpoint, path).parse()
 }

@@ -5,28 +5,23 @@
 //! there other other key-value pairs "underneath" it, such as "/foo/bar".
 
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::time::Duration;
 
-use futures::future::{Future, IntoFuture};
-use futures::stream::Stream;
 use hyper::client::connect::Connect;
 use hyper::{StatusCode, Uri};
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
-use tokio::timer::Timeout;
+use std::future::Future;
+use tokio::time::timeout;
 use url::Url;
 
 pub use crate::error::WatchError;
 
 use crate::client::{Client, ClusterInfo, Response};
 use crate::error::{ApiError, Error};
-use crate::first_ok::first_ok;
+use crate::first_ok::{first_ok, Result};
 use crate::options::{
-    ComparisonConditions,
-    DeleteOptions,
-    GetOptions as InternalGetOptions,
-    SetOptions,
+    ComparisonConditions, DeleteOptions, GetOptions as InternalGetOptions, SetOptions,
 };
 use url::form_urlencoded::Serializer;
 
@@ -137,14 +132,14 @@ pub struct WatchOptions {
 /// # Errors
 ///
 /// Fails if the conditions didn't match or if no conditions were given.
-pub fn compare_and_delete<C>(
-    client: &Client<C>,
-    key: &str,
-    current_value: Option<&str>,
+pub fn compare_and_delete<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
+    current_value: Option<&'a str>,
     current_modified_index: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_delete(
         client,
@@ -176,16 +171,16 @@ where
 /// # Errors
 ///
 /// Fails if the conditions didn't match or if no conditions were given.
-pub fn compare_and_swap<C>(
-    client: &Client<C>,
-    key: &str,
-    value: &str,
+pub fn compare_and_swap<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
+    value: &'a str,
     ttl: Option<u64>,
-    current_value: Option<&str>,
+    current_value: Option<&'a str>,
     current_modified_index: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -214,14 +209,14 @@ where
 /// # Errors
 ///
 /// Fails if the key already exists.
-pub fn create<C>(
-    client: &Client<C>,
-    key: &str,
-    value: &str,
+pub fn create<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
+    value: &'a str,
     ttl: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -246,13 +241,13 @@ where
 /// # Errors
 ///
 /// Fails if the key already exists.
-pub fn create_dir<C>(
-    client: &Client<C>,
-    key: &str,
+pub fn create_dir<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
     ttl: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -285,14 +280,14 @@ where
 /// # Errors
 ///
 /// Fails if the key already exists and is not a directory.
-pub fn create_in_order<C>(
-    client: &Client<C>,
-    key: &str,
-    value: &str,
+pub fn create_in_order<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
+    value: &'a str,
     ttl: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -318,13 +313,13 @@ where
 /// # Errors
 ///
 /// Fails if the key is a directory and `recursive` is `false`.
-pub fn delete<C>(
-    client: &Client<C>,
-    key: &str,
+pub fn delete<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
     recursive: bool,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_delete(
         client,
@@ -346,12 +341,12 @@ where
 /// # Errors
 ///
 /// Fails if the directory is not empty.
-pub fn delete_dir<C>(
-    client: &Client<C>,
-    key: &str,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+pub fn delete_dir<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_delete(
         client,
@@ -374,13 +369,13 @@ where
 /// # Errors
 ///
 /// Fails if the key doesn't exist.
-pub fn get<C>(
-    client: &Client<C>,
-    key: &str,
+pub fn get<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
     options: GetOptions,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_get(
         client,
@@ -408,14 +403,14 @@ where
 /// # Errors
 ///
 /// Fails if the node is a directory.
-pub fn set<C>(
-    client: &Client<C>,
-    key: &str,
-    value: &str,
+pub fn set<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
+    value: &'a str,
     ttl: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -439,13 +434,13 @@ where
 /// # Errors
 ///
 /// Fails if the node does not exist.
-pub fn refresh<C>(
-    client: &Client<C>,
-    key: &str,
+pub fn refresh<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
     ttl: u64,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -472,13 +467,13 @@ where
 /// # Errors
 ///
 /// Fails if the node is an existing directory.
-pub fn set_dir<C>(
-    client: &Client<C>,
-    key: &str,
+pub fn set_dir<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
     ttl: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -503,14 +498,14 @@ where
 /// # Errors
 ///
 /// Fails if the key does not exist.
-pub fn update<C>(
-    client: &Client<C>,
-    key: &str,
-    value: &str,
+pub fn update<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
+    value: &'a str,
     ttl: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -538,13 +533,13 @@ where
 /// # Errors
 ///
 /// Fails if the node does not exist.
-pub fn update_dir<C>(
-    client: &Client<C>,
-    key: &str,
+pub fn update_dir<'a, C>(
+    client: &'a Client<C>,
+    key: &'a str,
     ttl: Option<u64>,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     raw_set(
         client,
@@ -575,13 +570,13 @@ where
 ///
 /// Fails if a timeout is specified and the duration lapses without a response from the etcd
 /// cluster.
-pub fn watch<C>(
+pub async fn watch<C>(
     client: &Client<C>,
     key: &str,
     options: WatchOptions,
-) -> Box<dyn Future<Item = Response<KeyValueInfo>, Error = WatchError> + Send>
+) -> std::result::Result<Response<KeyValueInfo>, WatchError>
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Sync + Send + 'static,
 {
     let work = raw_get(
         client,
@@ -592,34 +587,31 @@ where
             wait: true,
             ..Default::default()
         },
-    )
-    .map_err(|errors| WatchError::Other(errors));
+    );
 
     if let Some(duration) = options.timeout {
-        Box::new(
-            Timeout::new(work, duration).map_err(|e| match e.into_inner() {
-                Some(we) => we,
-                None => WatchError::Timeout,
-            }),
-        )
+        match timeout(duration.into(), work).await {
+            Ok(res) => res.map_err(WatchError::Other),
+            Err(_) => Err(WatchError::Timeout),
+        }
     } else {
-        Box::new(work)
+        work.await.map_err(WatchError::Other)
     }
 }
 
 /// Constructs the full URL for an API call.
-fn build_url(endpoint: &Uri, path: &str) -> String {
-    format!("{}v2/keys{}", endpoint, path)
+fn build_uri(endpoint: &Uri, path: &str) -> std::result::Result<Uri, http::uri::InvalidUri> {
+    format!("{}v2/keys{}", endpoint, path).parse()
 }
 
 /// Handles all delete operations.
-fn raw_delete<C>(
+async fn raw_delete<C>(
     client: &Client<C>,
     key: &str,
     options: DeleteOptions<'_>,
-) -> Box<dyn Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send>
+) -> Result<KeyValueInfo>
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Sync + Send + 'static,
 {
     let mut query_pairs = HashMap::new();
 
@@ -635,7 +627,7 @@ where
         let conditions = options.conditions.unwrap();
 
         if conditions.is_empty() {
-            return Box::new(Err(vec![Error::InvalidConditions]).into_future());
+            return Err(vec![Error::InvalidConditions]);
         }
 
         if conditions.modified_index.is_some() {
@@ -653,53 +645,43 @@ where
     let http_client = client.http_client().clone();
     let key = key.to_string();
 
-    let result = first_ok(client.endpoints().to_vec(), move |endpoint| {
-        let url = Url::parse_with_params(&build_url(endpoint, &key), query_pairs.clone())
-            .map_err(Error::from)
-            .into_future();
-
-        let uri = url.and_then(|url| {
-            Uri::from_str(url.as_str())
-                .map_err(Error::from)
-                .into_future()
-        });
-
+    first_ok(client.endpoints().to_vec(), move |endpoint| {
         let http_client = http_client.clone();
+        let query_pairs = query_pairs.clone();
+        let key = key.clone();
+        async move {
+            let url =
+                Url::parse_with_params(&build_uri(&endpoint, &key)?.to_string(), query_pairs)?;
+            let uri = url.to_string().parse()?;
+            let response = http_client.delete(uri).await?;
 
-        let response = uri.and_then(move |uri| http_client.delete(uri).map_err(Error::from));
-
-        response.and_then(move |response| {
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
-
-            body.and_then(move |ref body| {
-                if status == StatusCode::OK {
-                    match serde_json::from_slice::<KeyValueInfo>(body) {
-                        Ok(data) => Ok(Response { data, cluster_info }),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
-                } else {
-                    match serde_json::from_slice::<ApiError>(body) {
-                        Ok(error) => Err(Error::Api(error)),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
+            let body = hyper::body::to_bytes(response).await?;
+            if status == StatusCode::OK {
+                match serde_json::from_slice::<KeyValueInfo>(&body) {
+                    Ok(data) => Ok(Response { data, cluster_info }),
+                    Err(error) => Err(Error::Serialization(error)),
                 }
-            })
-        })
-    });
-
-    Box::new(result)
+            } else {
+                match serde_json::from_slice::<ApiError>(&body) {
+                    Ok(error) => Err(Error::Api(error)),
+                    Err(error) => Err(Error::Serialization(error)),
+                }
+            }
+        }
+    })
+    .await
 }
 
 /// Handles all get operations.
-fn raw_get<C>(
+async fn raw_get<C>(
     client: &Client<C>,
     key: &str,
     options: InternalGetOptions,
-) -> impl Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send
+) -> Result<KeyValueInfo>
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     let mut query_pairs = HashMap::new();
 
@@ -721,50 +703,40 @@ where
     let key = key.to_string();
 
     first_ok(client.endpoints().to_vec(), move |endpoint| {
-        let url = Url::parse_with_params(&build_url(endpoint, &key), query_pairs.clone())
-            .map_err(Error::from)
-            .into_future();
-
-        let uri = url.and_then(|url| {
-            Uri::from_str(url.as_str())
-                .map_err(Error::from)
-                .into_future()
-        });
-
         let http_client = http_client.clone();
+        let key = key.clone();
+        let query_pairs = query_pairs.clone();
 
-        let response = uri.and_then(move |uri| http_client.get(uri).map_err(Error::from));
+        async move {
+            let url =
+                Url::parse_with_params(&build_uri(&endpoint, &key)?.to_string(), query_pairs)?;
+            let uri = url.to_string().parse()?;
+            let response = http_client.get(uri).await?;
 
-        response.and_then(|response| {
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
+            let body = hyper::body::to_bytes(response).await?;
 
-            body.and_then(move |ref body| {
-                if status == StatusCode::OK {
-                    match serde_json::from_slice::<KeyValueInfo>(body) {
-                        Ok(data) => Ok(Response { data, cluster_info }),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
-                } else {
-                    match serde_json::from_slice::<ApiError>(body) {
-                        Ok(error) => Err(Error::Api(error)),
-                        Err(error) => Err(Error::Serialization(error)),
-                    }
+            if status == StatusCode::OK {
+                match serde_json::from_slice::<KeyValueInfo>(&body) {
+                    Ok(data) => Ok(Response { data, cluster_info }),
+                    Err(error) => Err(Error::Serialization(error)),
                 }
-            })
-        })
+            } else {
+                match serde_json::from_slice::<ApiError>(&body) {
+                    Ok(error) => Err(Error::Api(error)),
+                    Err(error) => Err(Error::Serialization(error)),
+                }
+            }
+        }
     })
+    .await
 }
 
 /// Handles all set operations.
-fn raw_set<C>(
-    client: &Client<C>,
-    key: &str,
-    options: SetOptions<'_>,
-) -> Box<dyn Future<Item = Response<KeyValueInfo>, Error = Vec<Error>> + Send>
+async fn raw_set<C>(client: &Client<C>, key: &str, options: SetOptions<'_>) -> Result<KeyValueInfo>
 where
-    C: Clone + Connect,
+    C: Clone + Connect + Send + Sync + 'static,
 {
     let mut http_options = vec![];
 
@@ -781,13 +753,18 @@ where
     }
 
     let prev_exist = match options.prev_exist {
-        Some(prev_exist) => prev_exist,
-        None => false,
+        Some(prev_exist) => Some(prev_exist),
+        None => {
+            if options.refresh {
+                Some(true)
+            } else {
+                None
+            }
+        }
     };
 
     // If we are calling refresh, we should also ensure we are setting prevExist.
-    if prev_exist || options.refresh {
-        let prev_exist = prev_exist || options.refresh;
+    if let Some(prev_exist) = prev_exist {
         http_options.push(("prevExist".to_owned(), prev_exist.to_string()));
     }
 
@@ -797,7 +774,7 @@ where
 
     if let Some(ref conditions) = options.conditions {
         if conditions.is_empty() {
-            return Box::new(Err(vec![Error::InvalidConditions]).into_future());
+            return Err(vec![Error::InvalidConditions]);
         }
 
         if let Some(ref modified_index) = conditions.modified_index {
@@ -813,45 +790,38 @@ where
     let key = key.to_string();
     let create_in_order = options.create_in_order;
 
-    let result = first_ok(client.endpoints().to_vec(), move |endpoint| {
-        let mut serializer = Serializer::new(String::new());
-        serializer.extend_pairs(http_options.clone());
-        let body = serializer.finish();
-
-        let url = build_url(endpoint, &key);
-        let uri = Uri::from_str(url.as_str())
-            .map_err(Error::from)
-            .into_future();
-
+    first_ok(client.endpoints().to_vec(), move |endpoint| {
         let http_client = http_client.clone();
+        let key = key.clone();
+        let mut ser = Serializer::new(String::new());
+        ser.extend_pairs(http_options.clone());
+        let body = ser.finish();
 
-        let response = uri.and_then(move |uri| {
-            if create_in_order {
-                http_client.post(uri, body).map_err(Error::from)
+        async move {
+            let uri = build_uri(&endpoint, &key)?;
+            let response = if create_in_order {
+                http_client.post(uri, body).await?
             } else {
-                http_client.put(uri, body).map_err(Error::from)
-            }
-        });
+                http_client.put(uri, body).await?
+            };
 
-        response.and_then(|response| {
             let status = response.status();
             let cluster_info = ClusterInfo::from(response.headers());
-            let body = response.into_body().concat2().map_err(Error::from);
+            let body = hyper::body::to_bytes(response).await?;
 
-            body.and_then(move |ref body| match status {
+            match status {
                 StatusCode::CREATED | StatusCode::OK => {
-                    match serde_json::from_slice::<KeyValueInfo>(body) {
+                    match serde_json::from_slice::<KeyValueInfo>(&body) {
                         Ok(data) => Ok(Response { data, cluster_info }),
                         Err(error) => Err(Error::Serialization(error)),
                     }
                 }
-                _ => match serde_json::from_slice::<ApiError>(body) {
+                _ => match serde_json::from_slice::<ApiError>(&body) {
                     Ok(error) => Err(Error::Api(error)),
                     Err(error) => Err(Error::Serialization(error)),
                 },
-            })
-        })
-    });
-
-    Box::new(result)
+            }
+        }
+    })
+    .await
 }
