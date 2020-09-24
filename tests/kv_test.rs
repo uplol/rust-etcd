@@ -309,7 +309,20 @@ async fn set_and_refresh() {
     assert_eq!(node.value.unwrap(), "baz");
     assert!(node.ttl.is_some());
 
-    let res = kv::refresh(&client, "/test/foo", 30).await.unwrap();
+    let res = kv::refresh(
+        &client,
+        "/test/foo",
+        30,
+        Some(kv::ComparisonConditions {
+            value: Some("baz"),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.data.action, Action::Update);
+
+    let res = kv::refresh(&client, "/test/foo", 30, None).await.unwrap();
     assert_eq!(res.data.action, Action::Update);
 
     let node = res.data.node;

@@ -4,6 +4,7 @@
 //! of key-value pairs. For example, "/foo" is a key if it has a value, but it is a directory if
 //! there other other key-value pairs "underneath" it, such as "/foo/bar".
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -16,13 +17,12 @@ use tokio::time::timeout;
 use url::Url;
 
 pub use crate::error::WatchError;
+pub use crate::options::ComparisonConditions;
 
 use crate::client::{Client, ClusterInfo, Response};
 use crate::error::{ApiError, Error};
 use crate::first_ok::{first_ok, Result};
-use crate::options::{
-    ComparisonConditions, DeleteOptions, GetOptions as InternalGetOptions, SetOptions,
-};
+use crate::options::{DeleteOptions, GetOptions as InternalGetOptions, SetOptions};
 use url::form_urlencoded::Serializer;
 
 /// Information about the result of a successful key-value API operation.
@@ -223,7 +223,7 @@ where
         key,
         SetOptions {
             prev_exist: Some(false),
-            ttl: ttl,
+            ttl,
             value: Some(value),
             ..Default::default()
         },
@@ -438,6 +438,7 @@ pub fn refresh<'a, C>(
     client: &'a Client<C>,
     key: &'a str,
     ttl: u64,
+    conditions: Option<ComparisonConditions<'a>>,
 ) -> impl Future<Output = Result<KeyValueInfo>> + 'a
 where
     C: Clone + Connect + Send + Sync + 'static,
@@ -449,6 +450,7 @@ where
             ttl: Some(ttl),
             refresh: true,
             prev_exist: Some(true),
+            conditions,
             ..Default::default()
         },
     )
@@ -734,22 +736,34 @@ where
 }
 
 /// Handles all set operations.
-async fn raw_set<C>(client: &Client<C>, key: &str, options: SetOptions<'_>) -> Result<KeyValueInfo>
+async fn raw_set<'a, C>(
+    client: &Client<C>,
+    key: &str,
+    options: SetOptions<'a>,
+) -> Result<KeyValueInfo>
 where
     C: Clone + Connect + Send + Sync + 'static,
 {
-    let mut http_options = vec![];
-
-    if let Some(ref value) = options.value {
-        http_options.push(("value".to_owned(), value.to_string()));
+    fn bool_to_cow(value: bool) -> Cow<'static, str> {
+        if value {
+            Cow::Borrowed("true")
+        } else {
+            Cow::Borrowed("false")
+        }
     }
 
-    if let Some(ref ttl) = options.ttl {
-        http_options.push(("ttl".to_owned(), ttl.to_string()));
+    let mut http_options: Vec<(&'static str, Cow<'a, str>)> = vec![];
+
+    if let Some(value) = options.value {
+        http_options.push(("value", Cow::Borrowed(value)));
     }
 
-    if let Some(ref dir) = options.dir {
-        http_options.push(("dir".to_owned(), dir.to_string()));
+    if let Some(ttl) = options.ttl {
+        http_options.push(("ttl", Cow::Owned(ttl.to_string())));
+    }
+
+    if let Some(dir) = options.dir {
+        http_options.push(("dir", bool_to_cow(dir)));
     }
 
     let prev_exist = match options.prev_exist {
@@ -765,24 +779,24 @@ where
 
     // If we are calling refresh, we should also ensure we are setting prevExist.
     if let Some(prev_exist) = prev_exist {
-        http_options.push(("prevExist".to_owned(), prev_exist.to_string()));
+        http_options.push(("prevExist", bool_to_cow(prev_exist)));
     }
 
     if options.refresh {
-        http_options.push(("refresh".to_owned(), "true".to_owned()));
+        http_options.push(("refresh", bool_to_cow(true)));
     }
 
-    if let Some(ref conditions) = options.conditions {
+    if let Some(conditions) = &options.conditions {
         if conditions.is_empty() {
             return Err(vec![Error::InvalidConditions]);
         }
 
-        if let Some(ref modified_index) = conditions.modified_index {
-            http_options.push(("prevIndex".to_owned(), modified_index.to_string()));
+        if let Some(modified_index) = conditions.modified_index {
+            http_options.push(("prevIndex", Cow::Owned(modified_index.to_string())));
         }
 
-        if let Some(ref value) = conditions.value {
-            http_options.push(("prevValue".to_owned(), value.to_string()));
+        if let Some(value) = conditions.value {
+            http_options.push(("prevValue", Cow::Borrowed(value)));
         }
     }
 

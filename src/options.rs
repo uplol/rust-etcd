@@ -1,5 +1,5 @@
 /// Possible conditions for "compare and delete" and "compare and swap" operations.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ComparisonConditions<'a> {
     /// The etcd modified index the key must have before the operation is performed.
     pub modified_index: Option<u64>,
